@@ -168,8 +168,6 @@ public class GameView extends View {
             return;
         }
         if (guard++ > 3000) { finish(); return; }
-        for (int i = 0; i < nCells; i++)
-            if (run(board.get(i)) >= CLEAR) { clearCell = i; clearLeft = CLEAR; h.postDelayed(stepR, 60); return; }
         for (int a = 0; a < nCells; a++) {
             ArrayList<Integer> A = board.get(a);
             if (A.isEmpty()) continue;
@@ -187,6 +185,8 @@ public class GameView extends View {
                 return;
             }
         }
+        for (int i = 0; i < nCells; i++)
+            if (run(board.get(i)) >= CLEAR) { clearCell = i; clearLeft = run(board.get(i)); h.postDelayed(stepR, 60); return; }
         finish();
     }
 
