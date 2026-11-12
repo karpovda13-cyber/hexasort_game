@@ -21,7 +21,7 @@ public class GameView extends View {
             HS[k] = (float) Math.sin(a);
         }
     }
-    static class Snap { ArrayList<ArrayList<Integer>> b, t; int score, cleared; }
+    static class Snap { ArrayList<ArrayList<Integer>> b, t; int score, cleared, removed, rounds; int[] lock; }
 
     final Random rnd = new Random();
     final Handler h = new Handler(Looper.getMainLooper());
@@ -35,7 +35,8 @@ public class GameView extends View {
     int level = 1, savedLevel, best, rad, nCells, goal, lvColors = 3;
     int score, cleared, overlay, selected = -1, drag = -1, guard;
     int clearCell = -1, clearLeft, movSrc, movDst, movLeft;
-    int[] cq, cr;
+    int[] cq, cr, lock;
+    int rounds, removed;
     int[][] nb;
     ArrayList<ArrayList<Integer>> board = new ArrayList<>(), tray = new ArrayList<>();
     final Runnable stepR = new Runnable() { public void run() { step(); } };
@@ -71,25 +72,32 @@ public class GameView extends View {
 
     void start(boolean endl, int lv) {
         h.removeCallbacksAndMessages(null);
-        endless = endl; level = lv; menu = false; score = 0; cleared = 0; overlay = 0;
+        endless = endl; level = lv; menu = false; score = 0; cleared = 0; removed = 0; rounds = 0; overlay = 0;
         selected = -1; drag = -1; hammer = false; busy = false; clearCell = -1; movLeft = 0;
         snaps.clear();
         buildGrid(endl || lv > 3 ? 3 : 2);
         board = new ArrayList<>();
         for (int i = 0; i < nCells; i++) board.add(new ArrayList<Integer>());
-        goal = Math.min(15, 3 + lv);
+        goal = Math.min(400, 30 + 12 * lv);
+        lock = new int[nCells];
+        if (!endl && lv >= 2)
+            for (int k = Math.min(1 + lv / 3, 8); k > 0; k--) {
+                int c;
+                do c = rnd.nextInt(nCells); while (lock[c] > 0);
+                lock[c] = 15 + rnd.nextInt(20) + 3 * lv;
+            }
         lvColors = Math.min(3 + (lv - 1) / 3, 6);
         int pre = rad == 2 ? 5 : 9;
         for (int k = 0; k < pre; k++) {
             int c;
-            do c = rnd.nextInt(nCells); while (!board.get(c).isEmpty());
+            do c = rnd.nextInt(nCells); while (!board.get(c).isEmpty() || lock[c] > 0);
             board.set(c, gen(2));
         }
         fillTray();
         invalidate();
     }
 
-    int colors() { return endless ? Math.min(3 + cleared / 4, 7) : lvColors; }
+    int colors() { return Math.min((endless ? 3 : lvColors) + rounds / 15, 7); }
 
     ArrayList<Integer> gen(int maxSeg) {
         ArrayList<Integer> l = new ArrayList<>();
@@ -117,7 +125,7 @@ public class GameView extends View {
 
     void save() {
         Snap sn = new Snap();
-        sn.b = deep(board); sn.t = deep(tray); sn.score = score; sn.cleared = cleared;
+        sn.b = deep(board); sn.t = deep(tray); sn.score = score; sn.cleared = cleared; sn.removed = removed; sn.rounds = rounds; sn.lock = lock.clone();
         snaps.addLast(sn);
         if (snaps.size() > 80) snaps.removeFirst();
     }
@@ -125,7 +133,7 @@ public class GameView extends View {
     void undo() {
         Snap sn = snaps.pollLast();
         if (sn == null) return;
-        board = sn.b; tray = sn.t; score = sn.score; cleared = sn.cleared;
+        board = sn.b; tray = sn.t; score = sn.score; cleared = sn.cleared; removed = sn.removed; rounds = sn.rounds; lock = sn.lock;
         overlay = 0; selected = -1;
     }
 
@@ -138,7 +146,7 @@ public class GameView extends View {
         boolean all = true;
         for (ArrayList<Integer> l : tray) if (!l.isEmpty()) all = false;
         if (all) fillTray();
-        selected = -1; busy = true; guard = 0;
+        rounds++; selected = -1; busy = true; guard = 0;
         h.postDelayed(stepR, 150);
         invalidate();
     }
@@ -153,7 +161,7 @@ public class GameView extends View {
     void step() {
         if (clearCell >= 0) {
             ArrayList<Integer> l = board.get(clearCell);
-            if (!l.isEmpty()) l.remove(l.size() - 1);
+            if (!l.isEmpty()) { l.remove(l.size() - 1); removed++; for (int i = 0; i < nCells; i++) if (lock[i] > 0) lock[i]--; }
             if (--clearLeft <= 0) { clearCell = -1; cleared++; score += 100; }
             invalidate();
             h.postDelayed(stepR, clearCell >= 0 ? 35 : 120);
@@ -168,37 +176,53 @@ public class GameView extends View {
             return;
         }
         if (guard++ > 3000) { finish(); return; }
+        int bs = -1, bd = -1, bsc = 0;
         for (int a = 0; a < nCells; a++) {
-            ArrayList<Integer> A = board.get(a);
-            if (A.isEmpty()) continue;
+            if (board.get(a).isEmpty()) continue;
             for (int b : nb[a]) {
-                if (b < a) continue;
-                ArrayList<Integer> B = board.get(b);
+                ArrayList<Integer> A = board.get(a), B = board.get(b);
                 if (B.isEmpty() || !A.get(A.size() - 1).equals(B.get(B.size() - 1))) continue;
-                int ra = run(A), rb = run(B), dst;
-                if (ra != rb) dst = ra > rb ? a : b; else dst = A.size() >= B.size() ? a : b;
-                int src = dst == a ? b : a;
-                int room = CAP - board.get(dst).size();
-                if (room <= 0) continue;
-                movSrc = src; movDst = dst; movLeft = Math.min(run(board.get(src)), room);
-                h.postDelayed(stepR, 60);
-                return;
+                int sc = impact(a, b);
+                if (sc > bsc) { bsc = sc; bs = a; bd = b; }
             }
+        }
+        if (bs >= 0) {
+            movSrc = bs; movDst = bd;
+            movLeft = Math.min(run(board.get(bs)), CAP - board.get(bd).size());
+            h.postDelayed(stepR, 60);
+            return;
         }
         for (int i = 0; i < nCells; i++)
             if (run(board.get(i)) >= CLEAR) { clearCell = i; clearLeft = run(board.get(i)); h.postDelayed(stepR, 60); return; }
         finish();
     }
 
+    int impact(int a, int b) {
+        ArrayList<Integer> A = board.get(a), B = board.get(b);
+        int room = CAP - B.size();
+        if (room <= 0) return 0;
+        int ra = run(A), mv = Math.min(ra, room), sc = mv;
+        if (run(B) + mv >= CLEAR) sc += 100 + mv;
+        if (mv == A.size()) sc += 6;
+        else if (mv == ra) {
+            int nc = A.get(A.size() - ra - 1);
+            for (int x : nb[a]) {
+                ArrayList<Integer> X = board.get(x);
+                if (x != b && !X.isEmpty() && X.get(X.size() - 1) == nc) { sc += 12; break; }
+            }
+        }
+        return sc * 2 + (B.size() >= A.size() ? 1 : 0);
+    }
+
     void finish() {
         busy = false;
         if (endless && score > best) { best = score; prefs.edit().putInt("best", best).apply(); }
-        if (!endless && cleared >= goal) {
+        if (!endless && removed >= goal) {
             overlay = 1;
             if (level + 1 > savedLevel) { savedLevel = level + 1; prefs.edit().putInt("level", savedLevel).apply(); }
         } else {
             boolean full = true;
-            for (ArrayList<Integer> l : board) if (l.isEmpty()) full = false;
+            for (int i = 0; i < nCells; i++) if (board.get(i).isEmpty() && lock[i] <= 0) full = false;
             if (full) overlay = 2;
         }
         invalidate();
@@ -249,7 +273,7 @@ public class GameView extends View {
     int target(float px, float py) {
         int b = -1; float bd = s * s;
         for (int i = 0; i < nCells; i++) {
-            if (!board.get(i).isEmpty()) continue;
+            if (!board.get(i).isEmpty() || lock[i] > 0) continue;
             float d = (cellX(i) - px) * (cellX(i) - px) + (cellY(i) - py) * (cellY(i) - py);
             if (d < bd) { bd = d; b = i; }
         }
@@ -329,7 +353,7 @@ public class GameView extends View {
             int c = nearest(x, y);
             if (c < 0) return;
             if (hammer && !board.get(c).isEmpty()) { save(); board.get(c).clear(); hammer = false; }
-            else if (!hammer && selected >= 0 && board.get(c).isEmpty()) place(c, selected);
+            else if (!hammer && selected >= 0 && board.get(c).isEmpty() && lock[c] <= 0) place(c, selected);
         }
     }
 
@@ -361,6 +385,7 @@ public class GameView extends View {
             p.setColor(shade(col, 0.8f)); hex(c, x, yy, r);
         }
         p.setStyle(Paint.Style.FILL);
+        if (m > 0) text(c, String.valueOf(run(l)), x, y - (m - 1) * th + s * 0.25f, s * 0.75f, WHITE);
     }
 
     void text(Canvas c, String t, float x, float y, float size, int col) {
@@ -406,8 +431,8 @@ public class GameView extends View {
             p.setStyle(Paint.Style.FILL); p.setColor(0xFF26324F);
             c.drawRoundRect(rc(.28f, .085f, .96f, .10f), 12, 12, p);
             p.setColor(0xFF2ECC71);
-            c.drawRoundRect(rc(.28f, .085f, .28f + .68f * Math.min(1f, (float) cleared / goal), .10f), 12, 12, p);
-            text(c, "Наборов: " + cleared + "/" + goal, W * 0.62f, H * 0.125f, W * 0.038f, 0xFF9FB0D0);
+            c.drawRoundRect(rc(.28f, .085f, .28f + .68f * Math.min(1f, (float) removed / goal), .10f), 12, 12, p);
+            text(c, "Осталось плиток: " + Math.max(0, goal - removed), W * 0.62f, H * 0.125f, W * 0.038f, 0xFF9FB0D0);
         } else {
             text(c, "Очки: " + score, W * 0.62f, H * 0.062f, W * 0.05f, WHITE);
             text(c, "Рекорд: " + best, W * 0.62f, H * 0.10f, W * 0.038f, 0xFF9FB0D0);
@@ -415,7 +440,11 @@ public class GameView extends View {
         int hover = drag >= 0 ? target(dx, dy - s * 2.2f) : -1;
         p.setStyle(Paint.Style.FILL);
         for (int i = 0; i < nCells; i++)
-            if (board.get(i).isEmpty()) { p.setColor(0xFF26324F); hex(c, cellX(i), cellY(i), s * 0.92f); }
+            if (board.get(i).isEmpty()) {
+                p.setColor(lock[i] > 0 ? 0xFF5D6B82 : 0xFF26324F);
+                hex(c, cellX(i), cellY(i), s * 0.92f);
+                if (lock[i] > 0) text(c, String.valueOf(lock[i]), cellX(i), cellY(i) + s * 0.25f, s * 0.7f, WHITE);
+            }
         if (hover >= 0) {
             p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(s * 0.08f); p.setColor(WHITE);
             hex(c, cellX(hover), cellY(hover), s * 0.92f);
