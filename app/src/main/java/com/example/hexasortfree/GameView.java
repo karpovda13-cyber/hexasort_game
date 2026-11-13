@@ -11,7 +11,7 @@ import java.util.*;
 
 public class GameView extends View {
     static final int CAP = 24, CLEAR = 10, WHITE = 0xFFFFFFFF;
-    static final int[] PAL = {0xFFE74C3C, 0xFF3498DB, 0xFF2ECC71, 0xFFF1C40F, 0xFF9B59B6, 0xFFE67E22, 0xFF1ABC9C};
+    static final int[] PAL = {0xFF3498DB, 0xFFE74C3C, 0xFF2ECC71, 0xFFF1C40F, 0xFF1E1E24, 0xFFF4F4F4, 0xFFE67E22};
     static final float SQ3 = 1.7320508f;
     static final float[] HC = new float[6], HS = new float[6];
     static {
@@ -38,7 +38,8 @@ public class GameView extends View {
     int score, cleared, overlay, selected = -1, drag = -1, guard;
     int clearCell = -1, clearLeft, movSrc, movDst, movLeft;
     int[] cq, cr, lock, kind, hp;
-    float uMin, uMax; int rMin, rMax;
+    float uMin, uMax; int rMin, rMax, rot;
+    int[] dqa, dra;
     final ArrayList<Fl> fls = new ArrayList<>();
     int rounds, removed;
     int[][] nb;
@@ -96,6 +97,26 @@ public class GameView extends View {
     boolean frozen(int i) { return kind[i] == 3 && hp[i] > 0; }
     boolean usable(int i) { return board.get(i).isEmpty() && !blocked(i); }
 
+    ArrayList<Integer> genFor(int c, int maxSeg) {
+        ArrayList<Integer> l = gen(maxSeg);
+        for (int k = 0; k < 40; k++) {
+            boolean bad = false;
+            for (int x : nb[c]) {
+                ArrayList<Integer> X = board.get(x);
+                if (!X.isEmpty() && X.get(X.size() - 1).equals(l.get(l.size() - 1))) bad = true;
+            }
+            if (!bad) break;
+            l = gen(maxSeg);
+        }
+        return l;
+    }
+
+    int locksLeft() {
+        int k = 0;
+        for (int i = 0; i < nCells; i++) if (lock[i] > 0) k++;
+        return k;
+    }
+
     int pick() {
         for (int k = 0; k < 300; k++) {
             int c = rnd.nextInt(nCells);
@@ -117,8 +138,11 @@ public class GameView extends View {
         goal = Math.min(400, 30 + 12 * lv);
         lvColors = Math.min(3 + (lv - 1) / 3, 6);
         if (!endl) {
-            int[] cnt = {lv >= 3 ? Math.min(1 + lv / 6, 3) : 0, lv >= 2 ? Math.min(1 + lv / 4, 4) : 0,
-                    lv >= 4 ? Math.min(1 + lv / 5, 3) : 0, lv >= 6 ? Math.min((lv - 2) / 4, 3) : 0};
+            int[] avail = {3, 2, 4, 6};
+            int[] cnt = new int[4];
+            int mxc = Math.min(3, 1 + lv / 4);
+            if (g.nextInt(5) > 0)
+                for (int ty = 0; ty < 4; ty++) cnt[ty] = lv >= avail[ty] ? g.nextInt(mxc + 1) : 0;
             int used = 0;
             for (int ty = 0; ty < 4; ty++)
                 for (int k = 0; k < cnt[ty] && used < nCells / 4; k++) {
@@ -127,15 +151,20 @@ public class GameView extends View {
                     used++;
                     if (ty == 0) { lock[c] = 15 + g.nextInt(20) + 3 * lv; continue; }
                     kind[c] = ty + 1; hp[c] = 1 + g.nextInt(Math.min(3, 1 + lv / 4));
-                    if (ty == 2) board.set(c, gen(1));
+                    if (ty == 2) board.set(c, genFor(c, 1));
                 }
         }
         for (int k = 0; k < nCells / 4; k++) {
             int c = pick();
             if (c < 0) break;
-            board.set(c, gen(2));
+            board.set(c, genFor(c, 2));
         }
+        int mxl = 0;
+        for (int i = 0; i < nCells; i++) mxl = Math.max(mxl, lock[i]);
+        goal = Math.max(goal, mxl);
         fillTray();
+        rot = 0;
+        layout();
         invalidate();
     }
 
@@ -298,7 +327,7 @@ public class GameView extends View {
     void finish() {
         busy = false;
         if (endless && score > best) { best = score; prefs.edit().putInt("best", best).apply(); }
-        if (!endless && removed >= goal) {
+        if (!endless && removed >= goal && locksLeft() == 0) {
             overlay = 1;
             if (level + 1 > savedLevel) { savedLevel = level + 1; prefs.edit().putInt("level", savedLevel).apply(); }
         } else {
@@ -327,18 +356,29 @@ public class GameView extends View {
     void layout() {
         W = getWidth(); H = getHeight();
         float top = H * 0.15f, bottom = H * 0.70f;
+        if (dqa == null || dqa.length != nCells) { dqa = new int[nCells]; dra = new int[nCells]; }
+        uMin = 1e9f; uMax = -1e9f; rMin = 99; rMax = -99;
+        for (int i = 0; i < nCells; i++) {
+            int q = cq[i], r = cr[i];
+            for (int k = 0; k < rot; k++) { int nq = -r, nr = q + r; q = nq; r = nr; }
+            dqa[i] = q; dra[i] = r;
+            float u = q + r / 2f;
+            uMin = Math.min(uMin, u); uMax = Math.max(uMax, u);
+            rMin = Math.min(rMin, r); rMax = Math.max(rMax, r);
+        }
         float hu = 1.5f * (rMax - rMin) + 3.5f;
         s = Math.min(Math.min(W * 0.96f / (SQ3 * (uMax - uMin + 1)), (bottom - top) / hu), W * 0.11f);
         cx = W / 2f - s * SQ3 * (uMin + uMax) / 2f;
         cy = top + s * (2.4f - 1.5f * rMin) + ((bottom - top) - s * hu) / 2f;
     }
 
-    float cellX(int i) { return cx + s * SQ3 * (cq[i] + cr[i] / 2f); }
-    float cellY(int i) { return cy + s * 1.5f * cr[i]; }
+    float cellX(int i) { return cx + s * SQ3 * (dqa[i] + dra[i] / 2f); }
+    float cellY(int i) { return cy + s * 1.5f * dra[i]; }
     float trayX(int i) { return W * (1f / 6f + i / 3f); }
     float trayY() { return H * 0.82f; }
     RectF rc(float l, float t, float r, float b) { return new RectF(l * W, t * H, r * W, b * H); }
     RectF backR() { return rc(.03f, .03f, .24f, .075f); }
+    RectF[] rotR() { return new RectF[]{rc(.76f, .03f, .86f, .075f), rc(.87f, .03f, .97f, .075f)}; }
     RectF[] bar() {
         RectF[] r = new RectF[3];
         for (int i = 0; i < 3; i++) r[i] = rc(.04f + i * .30f, .90f, .32f + i * .30f, .96f);
@@ -409,6 +449,13 @@ public class GameView extends View {
             return;
         }
         if (backR().contains(x, y)) { goMenu(); return; }
+        if (overlay == 0) {
+            RectF[] rr = rotR();
+            if (rr[0].contains(x, y)) { rot = (rot + 5) % 6; return; }
+            if (rr[1].contains(x, y)) { rot = (rot + 1) % 6; return; }
+            if (drag < 0 && moved && downY < H * 0.74f && Math.abs(x - downX) > W * 0.18f
+                    && Math.abs(x - downX) > 1.5f * Math.abs(y - downY)) { rot = (rot + (x > downX ? 1 : 5)) % 6; return; }
+        }
         if (busy) return;
         if (overlay != 0) {
             RectF[] o = ov();
@@ -474,10 +521,10 @@ public class GameView extends View {
             p.setColor(shade(col, 0.6f)); hex(c, x, yy + th, r);
             p.setColor(col); hex(c, x, yy, r);
             p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(s * 0.03f);
-            p.setColor(shade(col, 0.8f)); hex(c, x, yy, r);
+            p.setColor(col == PAL[4] ? 0xFF8A8A99 : shade(col, 0.8f)); hex(c, x, yy, r);
         }
         p.setStyle(Paint.Style.FILL);
-        if (badge && m > 0) text(c, String.valueOf(run(l)), x, y - (m - 1) * th + s * 0.25f, s * 0.75f, WHITE);
+        if (badge && m > 0) text(c, String.valueOf(run(l)), x, y - (m - 1) * th + s * 0.25f, s * 0.75f, (l.get(m - 1) == 3 || l.get(m - 1) == 5) ? 0xFF222222 : WHITE);
     }
 
     void drawObstacle(Canvas c, int i) {
@@ -554,17 +601,22 @@ public class GameView extends View {
 
     void drawGame(Canvas c) {
         btn(c, backR(), "Меню", 0xFF2C3A5C);
+        btn(c, rotR()[0], "<", 0xFF2C3A5C);
+        btn(c, rotR()[1], ">", 0xFF2C3A5C);
         if (!endless) {
-            text(c, "Уровень " + level, W * 0.62f, H * 0.062f, W * 0.05f, WHITE);
+            text(c, "Уровень " + level, W * 0.5f, H * 0.062f, W * 0.05f, WHITE);
             p.setStyle(Paint.Style.FILL); p.setColor(0xFF26324F);
             c.drawRoundRect(rc(.28f, .085f, .96f, .10f), 12, 12, p);
             p.setColor(0xFF2ECC71);
             c.drawRoundRect(rc(.28f, .085f, .28f + .68f * Math.min(1f, (float) removed / goal), .10f), 12, 12, p);
-            text(c, "Осталось плиток: " + Math.max(0, goal - removed), W * 0.62f, H * 0.125f, W * 0.038f, 0xFF9FB0D0);
+            text(c, "Плиток: " + Math.max(0, goal - removed) + (locksLeft() > 0 ? "  •  Замков: " + locksLeft() : ""), W * 0.62f, H * 0.125f, W * 0.038f, 0xFF9FB0D0);
         } else {
-            text(c, "Очки: " + score, W * 0.62f, H * 0.062f, W * 0.05f, WHITE);
-            text(c, "Рекорд: " + best, W * 0.62f, H * 0.10f, W * 0.038f, 0xFF9FB0D0);
+            text(c, "Очки: " + score, W * 0.5f, H * 0.062f, W * 0.05f, WHITE);
+            text(c, "Рекорд: " + best, W * 0.5f, H * 0.10f, W * 0.038f, 0xFF9FB0D0);
         }
+        Integer[] ordB = new Integer[nCells];
+        for (int i = 0; i < nCells; i++) ordB[i] = i;
+        Arrays.sort(ordB, (u, v) -> dra[u] != dra[v] ? dra[u] - dra[v] : dqa[u] - dqa[v]);
         int hover = drag >= 0 ? target(dx, dy - s * 2.2f) : -1;
         p.setStyle(Paint.Style.FILL);
         for (int i = 0; i < nCells; i++)
@@ -578,8 +630,9 @@ public class GameView extends View {
             p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(s * 0.08f); p.setColor(WHITE);
             hex(c, cellX(hover), cellY(hover), s * 0.92f);
         }
-        for (int i = 0; i < nCells; i++)
-            if (!board.get(i).isEmpty()) {
+        for (Integer ii : ordB)
+            if (!board.get(ii).isEmpty()) {
+                int i = ii;
                 boolean fz = frozen(i);
                 stack(c, cellX(i), cellY(i), board.get(i), !fz);
                 if (fz) drawIce(c, i);
