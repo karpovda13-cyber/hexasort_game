@@ -10,7 +10,7 @@ import android.view.View;
 import java.util.*;
 
 public class GameView extends View {
-    static final int CAP = 24, CLEAR = 10, WHITE = 0xFFFFFFFF;
+    static final int CAP = 10000, CLEAR = 10, WHITE = 0xFFFFFFFF;
     static final int[] PAL = {0xFF56F0F8, 0xFF808BA7, 0xFF199CEC, 0xFFFE4682, 0xFF76E348, 0xFFFFE262, 0xFFFFBEE6, 0xFFD075FF};
     static final float SQ3 = 1.7320508f;
     static final float[] HC = new float[6], HS = new float[6];
@@ -235,8 +235,8 @@ public class GameView extends View {
         boolean all = true;
         for (ArrayList<Integer> l : tray) if (!l.isEmpty()) all = false;
         if (all) { rounds++; fillTray(); }
-        selected = -1; guard = 0;
-        if (!busy) { turnStart = removed; burnsChain = 0; busy = true; h.postDelayed(stepR, 150); }
+        selected = -1;
+        if (!busy) { guard = 0; turnStart = removed; burnsChain = 0; busy = true; h.postDelayed(stepR, 150); }
         invalidate();
     }
 
@@ -392,7 +392,7 @@ public class GameView extends View {
             int k = kills.remove(0);
             if (!board.get(k).isEmpty() && !frozen(k)) { beginClear(k, board.get(k).size()); return; }
         }
-        if (guard++ > 3000) { finish(); return; }
+        if (guard++ > 600) { finish(); return; }
         int bs = -1, bd = -1, bsc = Integer.MIN_VALUE;
         for (int a = 0; a < nCells; a++) {
             if (board.get(a).isEmpty() || frozen(a)) continue;
